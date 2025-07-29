@@ -421,8 +421,9 @@ export default function Home() {
                       </button>
                     </div>
                   </div>
-                  <div className="flex-1 p-2 lg:p-4 rounded-md overflow-y-auto bg-bistre">
-                    <div dangerouslySetInnerHTML={{ __html: selectedNewsletter.cleanedHtml }} />
+                  <div className="flex-1 p-2 lg:p-4 rounded-md overflow-y-auto bg-bistre text-black">
+                    <div className='email-wrapper'
+                    dangerouslySetInnerHTML={{ __html: selectedNewsletter.cleanedHtml }} />
                   </div>
                 </div>
               ) : (
