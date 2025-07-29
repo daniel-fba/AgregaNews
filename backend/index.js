@@ -76,9 +76,9 @@ function cleanHtmlContent(htmlContent) {
     const $ = cheerio.load(htmlContent);
 
     $('script, style, link, meta').remove();
-    $('img[src*="pixel"], img[src*="tracker"]').remove();
-    $('[aria-label="unsubscribe"], [href*="unsubscribe"]').remove();
-    $('[class*="ad"], [id*="ad"]').remove();
+    // $('img[src*="pixel"], img[src*="tracker"]').remove();
+    // $('[aria-label="unsubscribe"], [href*="unsubscribe"]').remove();
+    // $('[class*="ad"], [id*="ad"]').remove();
 
     return $.html();
 }
@@ -172,12 +172,12 @@ app.get('/api/gmail/messages', async (req, res) => {
             gmail.users.messages.list({
                 userId: 'me',
                 maxResults: 50,
-                q: 'label:newsletter -in:spam -in:trash'
+                q: '(category:promotions OR label:newsletter OR from:noreply OR from:newsletter OR subject:unsubscribe) -in:spam -in:trash'
             }),
             gmail.users.messages.list({
                 userId: 'me',
-                maxResults: 25,
-                q: 'label:newsletter in:trash'
+                maxResults: 50,
+                q: '(category:promotions OR label:newsletter OR from:noreply OR from:newsletter OR subject:unsubscribe) in:trash'
             })
         ]);
 
