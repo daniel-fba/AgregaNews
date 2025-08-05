@@ -250,7 +250,11 @@ app.get('/api/gmail/messages', async (req, res) => {
 
     } catch (error) {
         console.error('Erro ao buscar e-mails:', error);
-        if (error.code === 401 || error.code === 403) {
+        if (error.code === 401
+            || error.code === 403
+            || error.message.includes('no refresh token is set')
+            || error.message.includes('invalid_grant') 
+        ) {
             res.status(401).send('Sua sessão expirou. Por favor, reautentique.');
         } else {
             res.status(500).send('Erro ao buscar e-mails: ' + error.message);
@@ -332,7 +336,7 @@ app.post('/api/gmail/messages/:messageId/untrash', async (req, res) => {
     }
 });
 
-app.post ('/api/gmail/messages/:messageId/unread', async(req, res) => {
+app.post('/api/gmail/messages/:messageId/unread', async (req, res) => {
     if (!oauth2Client.credentials || !oauth2Client.credentials.access_token) {
         return res.status(401).json({ success: false, error: 'Usuário não autenticado.' });
     }

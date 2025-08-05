@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Image from 'next/image';
 import axios from 'axios';
 import { handleMarkAsRead, handleMarkAsUnread, handleMoveToTrash, handleRestoreFromTrash } from '../lib/apiHandlers';
 
@@ -146,22 +147,67 @@ export default function Home() {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-    const filteredNewsletters = newsletters.filter(newsletter => {
-      if (newsletter.isInTrash) {
-        return new Date(newsletter.date) > thirtyDaysAgo;
-      }
-      return true;
+    const NewsletterForStorage = (newsletter: Newsletter) => ({
+      messageId: newsletter.messageId,
+      subject: newsletter.subject,
+      from: newsletter.from,
+      date: newsletter.date,
+      cleanedHtml: newsletter.isInTrash
+        ? newsletter.cleanedHtml.substring(0, 80000) // Apenas 80KB para lixeira
+        : newsletter.cleanedHtml.substring(0, 100000), // 100KB para ativas
+      originalHtml: '',
+      isRead: newsletter.isRead,
+      isInTrash: newsletter.isInTrash,
+      labels: newsletter.labels
     });
 
-    const maxCacheSize = 500;
+    const filteredNewsletters = newsletters
+      .filter(newsletter => {
+        if (newsletter.isInTrash) {
+          return new Date(newsletter.date) > thirtyDaysAgo;
+        }
+        return true;
+      })
+      .map(NewsletterForStorage);
+
+    const maxCacheSize = 200; 
     const finalNewsletters = filteredNewsletters.length > maxCacheSize
-      ? filteredNewsletters.slice(0, maxCacheSize)
+      ? filteredNewsletters
+        .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        .slice(0, maxCacheSize)
       : filteredNewsletters;
+      
+    try { // Tenta salvar normalmente
+      const dataString = JSON.stringify(finalNewsletters);
+      const sizeInMB = (dataString.length / (1024 * 1024)).toFixed(2);
 
-    localStorage.setItem('newsletters', JSON.stringify(finalNewsletters));
-    localStorage.setItem('lastSync', new Date().toISOString());
+      console.log(`Tentando salvar ${sizeInMB}MB no localStorage`);
 
-    console.log(`Cache atualizado: ${finalNewsletters.length} newsletters (${finalNewsletters.filter(n => !n.isInTrash).length} ativas, ${finalNewsletters.filter(n => n.isInTrash).length} na lixeira)`);
+      if (dataString.length > 4 * 1024 * 1024) {
+        console.warn('Dados muito grandes, reduzindo ainda mais...');
+
+        // Última tentativa: salva apenas 100 newsletters com HTML reduzido
+        const emergencyCut = finalNewsletters
+          .slice(0, 100) 
+          .map(nl => ({
+            ...nl,
+            cleanedHtml: nl.cleanedHtml.substring(0, 100000) // Máximo 100KB cada
+          }));
+
+        localStorage.setItem('newsletters', JSON.stringify(emergencyCut));
+        localStorage.setItem('lastSync', new Date().toISOString());
+
+        console.log(`Cache de emergência: ${emergencyCut.length} newsletters (reduzidas)`);
+      } else {
+        localStorage.setItem('newsletters', dataString);
+        localStorage.setItem('lastSync', new Date().toISOString());
+
+        console.log(`Cache atualizado: ${finalNewsletters.length} newsletters (${finalNewsletters.filter(n => !n.isInTrash).length} ativas, ${finalNewsletters.filter(n => n.isInTrash).length} na lixeira) - ${sizeInMB}MB`);
+      }
+
+    } catch (error) {
+      console.error('Erro ao salvar no localStorage:', error);
+    }
   };
 
   const loadFromLocalStorage = (): Newsletter[] => {
@@ -249,9 +295,10 @@ export default function Home() {
 
   if (error) {
     return (
-      <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-red-100 text-red-800">
-        <h1 className="text-4xl font-bold mb-8">Erro: {error}</h1>
-        {error.includes('autenticado') && (
+      <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-almond text-black">
+        <Image src="/error-icon.png" alt="Erro" className='mb-4 max-w-xs' width={200} height={200} />
+        <h1 className="text-4xl font-bold mb-8 ">Erro: {error}</h1>
+        {error && error.includes('autenticado') && (
           <p className="text-lg">
             <a href={`${BACKEND_URL}/auth/google`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
               Clique aqui para autenticar com o Google
@@ -423,7 +470,7 @@ export default function Home() {
                   </div>
                   <div className="flex-1 p-2 lg:p-4 rounded-md overflow-y-auto bg-bistre text-black">
                     <div className='email-wrapper'
-                    dangerouslySetInnerHTML={{ __html: selectedNewsletter.cleanedHtml }} />
+                      dangerouslySetInnerHTML={{ __html: selectedNewsletter.cleanedHtml }} />
                   </div>
                 </div>
               ) : (
