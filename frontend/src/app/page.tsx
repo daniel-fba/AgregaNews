@@ -4,18 +4,9 @@ import { useState, useEffect, useCallback } from 'react';
 import Image from 'next/image';
 import axios from 'axios';
 import { handleMarkAsRead, handleMarkAsUnread, handleMoveToTrash, handleRestoreFromTrash } from '../lib/apiHandlers';
-
-interface Newsletter {
-  messageId: string;
-  subject: string;
-  from: string;
-  date: string;
-  cleanedHtml: string;
-  originalHtml: string;
-  isRead: boolean;
-  isInTrash: boolean;
-  labels: string[];
-}
+import { NewsletterList } from '../components/NewsletterList';
+import { NewsletterViewer } from '../components/NewsletterViewer';
+import { Newsletter } from '../types/newsletter';
 
 export default function Home() {
   const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
@@ -24,8 +15,34 @@ export default function Home() {
   const [selectedNewsletter, setSelectedNewsletter] = useState<Newsletter | null>(null);
   const [showToast, setShowToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [filterMode, setFilterMode] = useState<'all' | 'active' | 'trash'>('active');
+  const [userId, setUserId] = useState<string | null>(null);
 
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const urlUserId = urlParams.get('userId');
+
+    if (urlUserId) {
+      localStorage.setItem('userId', urlUserId);
+      setUserId(urlUserId);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else {
+      const storedUserId = localStorage.getItem('userId');
+      if (storedUserId) {
+        setUserId(storedUserId);
+      } else {
+        setError('Por favor, faça o login.');
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  const handleLogin = () => {
+    const tempUserId = `user_${Date.now()}`;
+    localStorage.setItem('userId', tempUserId);
+    window.location.href = `${BACKEND_URL}/auth/google?userId=${tempUserId}`;
+  };
 
   const getFilteredNewsletters = useCallback(() => {
     switch (filterMode) {
@@ -43,13 +60,13 @@ export default function Home() {
     try {
       let result;
       if (action === 'read') {
-        result = await handleMarkAsRead(BACKEND_URL, newsletterToUpdate.messageId);
+        result = await handleMarkAsRead(BACKEND_URL, newsletterToUpdate.messageId, userId as string);
       } else if (action === 'unread') {
-        result = await handleMarkAsUnread(BACKEND_URL, newsletterToUpdate.messageId);
+        result = await handleMarkAsUnread(BACKEND_URL, newsletterToUpdate.messageId, userId as string);
       } else if (action === 'trash') {
-        result = await handleMoveToTrash(BACKEND_URL, newsletterToUpdate.messageId);
+        result = await handleMoveToTrash(BACKEND_URL, newsletterToUpdate.messageId, userId as string);
       } else if (action === 'untrash') {
-        result = await handleRestoreFromTrash(BACKEND_URL, newsletterToUpdate.messageId);
+        result = await handleRestoreFromTrash(BACKEND_URL, newsletterToUpdate.messageId, userId as string);
       }
 
       if (result?.success) {
@@ -103,9 +120,25 @@ export default function Home() {
             'restaurar da lixeira';
       showTemporaryToast(`Erro ao ${actionText}.`, 'error');
     }
-  }, [newsletters, BACKEND_URL]);
+  }, [newsletters, BACKEND_URL, userId]);
 
-  const navigateNewsletter = useCallback((direction: 'next' | 'prev') => {
+  const handleNewsletterClick = (newsletter: Newsletter) => {
+    setSelectedNewsletter(newsletter);
+    handleAction('read', newsletter);
+  }
+
+  const handleCloseModal = () => {
+    setSelectedNewsletter(null);
+  }
+
+  const getCurrentNewsletterIndex = useCallback(() => {
+    if (!selectedNewsletter) return -1;
+    const filteredNewsletters = getFilteredNewsletters().sort((a, b) =>
+      new Date(b.date).getTime() - new Date(a.date).getTime());
+    return filteredNewsletters.findIndex(nl => nl.messageId === selectedNewsletter.messageId);
+  }, [selectedNewsletter, getFilteredNewsletters]);
+
+  const navigateNewsletter = useCallback((direction: 'next' | 'previous') => {
     if (!selectedNewsletter) return;
 
     const filteredNewsletters = getFilteredNewsletters()
@@ -135,7 +168,7 @@ export default function Home() {
         navigateNewsletter('next');
       } else if (event.key === 'ArrowLeft') {
         event.preventDefault();
-        navigateNewsletter('prev');
+        navigateNewsletter('previous');
       }
     };
 
@@ -216,10 +249,20 @@ export default function Home() {
   };
 
   const fetchNewslettersFromGmail = useCallback(async () => {
+    if (!userId) {
+      setError('Por favor, faça o login para buscar newsletters.');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get(`${BACKEND_URL}/api/gmail/messages`);
+      const response = await axios.get(`${BACKEND_URL}/api/gmail/messages`, {
+        headers: {
+          'Authorization': `Bearer ${userId}`
+        }
+      });
       const data = response.data;
 
       if (data.newsletters) {
@@ -242,7 +285,7 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [BACKEND_URL]);
+  }, [BACKEND_URL, userId]);
 
   const loadInitialData = useCallback(() => {
     const cached = loadFromLocalStorage();
@@ -276,14 +319,20 @@ export default function Home() {
     }, 3000);
   };
 
-  const handleNewsletterClick = (newsletter: Newsletter) => {
-    setSelectedNewsletter(newsletter);
-    handleAction('read', newsletter);
-  };
-
-  const handleCloseModal = () => {
-    setSelectedNewsletter(null);
-  };
+  if (!userId) {
+    return (
+      <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-cinereous text-black">
+        <h1 className="text-4xl font-bold mb-8 text-snow">AgregaNews</h1>
+        <p className="text-lg mb-4 text-snow">Para continuar faça login com sua conta do Google.</p>
+        <button
+          onClick={handleLogin}
+          className="bg-blue-600 hover:bg-blue-700 text-snow text-lg font-bold py-3 px-6 rounded-md transition-colors duration-300"
+        >
+          Entrar com Google
+        </button>
+      </main>
+    );
+  }
 
   if (loading) {
     return (
@@ -298,9 +347,9 @@ export default function Home() {
       <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-almond text-black">
         <Image src="/error-icon.png" alt="Erro" className='mb-4 max-w-xs' width={200} height={200} />
         <h1 className="text-4xl font-bold mb-8 ">Erro: {error}</h1>
-        {error && error.includes('autenticado') && (
+        {error && (error.includes('autenticado') || error.includes('login')) && (
           <p className="text-lg">
-            <a href={`${BACKEND_URL}/auth/google`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+            <a href={`${BACKEND_URL}/auth/google?userId=${userId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
               Clique aqui para autenticar com o Google
             </a>
             {' '}e depois recarregue esta página.
@@ -309,6 +358,8 @@ export default function Home() {
       </main>
     );
   }
+
+  const filteredNewsletters = getFilteredNewsletters()
 
   return (
     <main className="flex min-h-screen flex-col p-4 md:p-6 lg:p-8 bg-cinereous">
@@ -330,6 +381,9 @@ export default function Home() {
 
           <div className="flex gap-x-2">
             <button
+              type='button'
+              title='Mostrar todas as newsletters'
+              aria-label='Mostrar todas as newsletters'
               onClick={() => setFilterMode('all')}
               className={`px-3 py-1 rounded-md text-sm transition-colors cursor-pointer ${filterMode === 'all'
                 ? 'bg-blue-600 text-snow'
@@ -339,6 +393,9 @@ export default function Home() {
               Todas
             </button>
             <button
+              type='button'
+              title='Mostrar apenas newsletters ativas'
+              aria-label='Mostrar apenas newsletters ativas'
               onClick={() => setFilterMode('active')}
               className={`px-3 py-1 rounded-md text-sm transition-colors cursor-pointer ${filterMode === 'active'
                 ? 'bg-green-600 text-snow'
@@ -348,6 +405,9 @@ export default function Home() {
               Ativas
             </button>
             <button
+              type='button'
+              title='Mostrar apenas newsletters na lixeira'
+              aria-label='Mostrar apenas newsletters na lixeira'
               onClick={() => setFilterMode('trash')}
               className={`px-3 py-1 rounded-md text-sm transition-colors cursor-pointer ${filterMode === 'trash'
                 ? 'bg-red-600 text-snow'
@@ -358,6 +418,10 @@ export default function Home() {
             </button>
           </div>
           <button
+            type='button'
+            title='Sincronizar com Gmail'
+            aria-label='Sincronizar com Gmail'
+            disabled={loading}
             onClick={syncWithGmail}
             className="bg-blue-600 hover:bg-blue-700 text-snow text-sm font-bold py-2 px-4 rounded-md transition-colors duration-300 cursor-pointer"
           >
@@ -372,138 +436,22 @@ export default function Home() {
           <p className="text-center text-xl text-black">Nenhuma newsletter encontrada. Verifique se há e-mails no Gmail e se o backend está autenticado e sincronizado.</p>
         ) : (
           <>
-            <div className="w-full lg:w-1/4 lg:min-w-80 h-1/4 lg:h-full overflow-y-auto flex-shrink-0">
-              {getFilteredNewsletters()
-                .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                .map((nl) => (
-                  <div
-                    key={nl.messageId}
-                    className={`bg-almond hover:bg-bistre group rounded-lg shadow-lg p-2 hover:shadow-xl transition-shadow duration-300 cursor-pointer m-1 ${!nl.isRead ? 'border-l-4 border-blue-500' : ''
-                      } ${nl.isInTrash ? 'opacity-70 border-r-4 border-red-400' : ''
-                      }`}
-                    onClick={() => handleNewsletterClick(nl)}
-                  >
-                    <div className="flex mb-2 gap-1 relative">
-                      <h2 className="text-xl lg:text-2xl font-semibold text-snow mb-2 truncate bg-bistre px-2 py-1 rounded-md">
-                        {nl.subject}
-                        {nl.isInTrash && <span className="text-red-500 text-sm ml-2"></span>}
-                      </h2>
-                      <button
-                        type="button"
-                        title="Marcar como lida"
-                        aria-label="Marcar como lida"
-                        className="absolute rounded-2xl p-2 -bottom-12 right-12 lg:-bottom-14 lg:right-12 opacity-0 group-hover:opacity-100 cursor-pointer bg-blue-700 hover:bg-blue-800 text-gray-600 flex items-center justify-center transition-opacity duration-200"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAction('read', nl);
-                        }}
-                      >
-                        <Image src="/mark-email-read.png" alt="Marcar como lida" className="w-6 h-6" width={24} height={24} />
-                      </button>
-                      <button
-                        type="button"
-                        title={nl.isInTrash ? "Restaurar" : "Excluir"}
-                        aria-label={nl.isInTrash ? "Restaurar item da lixeira" : "Mover para lixeira"}
-                        className="absolute rounded-2xl p-2 -bottom-12 right-0 lg:-bottom-14 lg:right-0 opacity-0 group-hover:opacity-100 cursor-pointer bg-red-700 hover:bg-red-800 text-gray-600 flex items-center justify-center transition-opacity duration-200"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleAction(nl.isInTrash ? 'untrash' : 'trash', nl);
-                        }}
-                      >
-                        <Image src="/delete.png" alt="Excluir" className="w-6 h-6" width={24} height={24} />
-                      </button>
-                    </div>
-                    <p className="text-xs lg:text-sm group-hover:text-white text-gray-600 mb-1">
-                      <b>De:</b> {nl.from.split('<')[0].trim()}
-                    </p>
-                    <p className="text-xs lg:text-sm group-hover:text-white text-gray-600">
-                      <b>Em:</b> {new Date(nl.date).toLocaleDateString()}
-                    </p>
-                  </div>
-                ))}
-            </div>
+            <NewsletterList
+              newsletters={filteredNewsletters}
+              onSelectNewsletter={handleNewsletterClick}
+              onAction={handleAction}
+              selectedNewsletter={selectedNewsletter}
+            />
 
-            <div className='flex-1 p-1 overflow-x-auto h-3/4 lg:h-full'>
-              {selectedNewsletter ? (
-                <div className="bg-almond rounded-lg shadow-2xl p-4 lg:p-6 h-full flex flex-col">
-                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-lg lg:text-2xl font-bold bg-bistre px-2 py-1 rounded-md text-snow truncate">
-                      {selectedNewsletter.subject}
-                    </h2>
-                    <button
-                      onClick={handleCloseModal}
-                      className="text-gray-500 hover:text-gray-800 text-2xl lg:text-3xl font-bold leading-none cursor-pointer"
-                    >
-                      &times;
-                    </button>
-                  </div>
-                  <p className="text-xs lg:text-sm text-gray-600 mb-2">
-                    <b>De:</b> {selectedNewsletter.from.split('<')[0].trim()} | <b>Em:</b> {new Date(selectedNewsletter.date).toLocaleDateString()}
-                  </p>
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {selectedNewsletter.isRead && (
-                      <button className='bg-blue-600 hover:bg-blue-700 text-snow px-3 lg:px-4 py-2 rounded-md cursor-pointer text-xs lg:text-sm'
-                        onClick={() => handleAction('unread', selectedNewsletter)}>
-                        Marcar como não lida
-                      </button>
-                    )}
-                    {!selectedNewsletter.isRead && (
-                      <button
-                        className="bg-green-600 hover:bg-green-700 text-snow px-3 lg:px-4 py-2 rounded-md cursor-pointer text-xs lg:text-sm"
-                        onClick={() => handleAction('read', selectedNewsletter)}
-                      >
-                        Marcar como lida
-                      </button>
-                    )}
-                    {!selectedNewsletter.isInTrash && (
-                      <button
-                        className="bg-red-600 hover:bg-red-700 text-snow px-3 lg:px-4 py-2 rounded-md cursor-pointer text-xs lg:text-sm"
-                        onClick={() => handleAction('trash', selectedNewsletter)}
-                      >
-                        Mover para a lixeira
-                      </button>
-                    )}
-                    {selectedNewsletter.isInTrash && (
-                      <button
-                        className="bg-blue-600 hover:bg-blue-700 text-snow px-3 lg:px-4 py-2 rounded-md cursor-pointer text-xs lg:text-sm"
-                        onClick={() => handleAction('untrash', selectedNewsletter)}
-                      >
-                        Restaurar da lixeira
-                      </button>
-                    )}
-                    <div className="flex items-center gap-2 ml-auto">
-                      <button
-                        onClick={() => navigateNewsletter('prev')}
-                        className="bg-gray-600 hover:bg-gray-700 text-snow px-3 py-2 rounded-md cursor-pointer text-xs lg:text-sm flex items-center gap-1"
-                      >
-                        ←
-                      </button>
-                      <div className="text-sm text-gray-600 bg-gray-100 px-3 py-2 rounded-md">
-                        {(() => {
-                          const filteredNewsletters = getFilteredNewsletters()
-                            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-                          const currentIndex = filteredNewsletters.findIndex(nl => nl.messageId === selectedNewsletter.messageId);
-                          return `${currentIndex + 1} / ${filteredNewsletters.length}`;
-                        })()}
-                      </div>
-                      <button
-                        onClick={() => navigateNewsletter('next')}
-                        className="bg-gray-600 hover:bg-gray-700 text-snow px-3 py-2 rounded-md cursor-pointer text-xs lg:text-sm flex items-center gap-1"
-                      >
-                        →
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex-1 p-2 lg:p-4 rounded-md overflow-y-auto bg-bistre text-black">
-                    <div className='email-wrapper'
-                      dangerouslySetInnerHTML={{ __html: selectedNewsletter.cleanedHtml }} />
-                  </div>
-                </div>
-              ) : (
-                <div className="h-full flex items-center justify-center text-black">
-                  <p className="text-lg">Selecione uma newsletter para visualizar</p>
-                </div>
-              )}
+            <div className="flex-1 lg:w-3/4 h-full overflow-y-auto p-4 lg:p-6">
+              <NewsletterViewer
+                newsletter={selectedNewsletter}
+                onClose={handleCloseModal}
+                onAction={handleAction}
+                onNavigate={navigateNewsletter}
+                currentIndex={getCurrentNewsletterIndex()}
+                totalCount={filteredNewsletters.length}
+              />
             </div>
           </>
         )}

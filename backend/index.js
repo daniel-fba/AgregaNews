@@ -4,9 +4,13 @@ const express = require('express');
 const { google } = require('googleapis');
 const cheerio = require('cheerio');
 const cors = require('cors');
+const sqlite3 = require('sqlite3');
+const { open } = require('sqlite');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+let db;
 
 app.use(cors({
     origin: 'http://localhost:3000',
@@ -22,48 +26,64 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_REDIRECT_URI
 );
 
-const gmail = google.gmail({
-    version: 'v1',
-    auth: oauth2Client
-});
+async function initializeDatabase() {
+    try {
+        db = await open({
+            filename: './usersTokens.sqlite',
+            driver: sqlite3.Database
+        });
 
-let tokenCache = {
-    accessToken: null,
-    refreshToken: null,
-    expiryDate: null,
-    scope: null
-};
-
-let newslettersCache = new Map();
-
-async function loadTokensAndOAuth() {
-    if (tokenCache.refreshToken || tokenCache.accessToken) {
-        const credentials = {
-            access_token: tokenCache.accessToken,
-            refresh_token: tokenCache.refreshToken,
-            scope: tokenCache.scope,
-            token_type: 'Bearer',
-            expiry_date: tokenCache.expiryDate
-        };
-        oauth2Client.setCredentials(credentials);
-        console.log('Tokens carregados do cache em memória.');
-    } else {
-        console.log('Nenhum token encontrado no cache. Autenticação necessária.');
+        await db.exec(`
+        CREATE TABLE IF NOT EXISTS users (
+            userId TEXT PRIMARY KEY,
+            accessToken TEXT,
+            refreshToken TEXT,
+            expiryDate INTEGER
+            );
+            `);
+        console.log('Banco de dados inicializado.');
+    } catch (error) {
+        console.error('Erro ao inicializar o banco de dados:', error);
+        process.exit(1);
     }
 }
 
-oauth2Client.on('tokens', async (tokens) => {
-    tokenCache.accessToken = tokens.access_token;
-    tokenCache.scope = tokens.scope;
-    tokenCache.expiryDate = tokens.expiry_date;
-
-    if (tokens.refresh_token) {
-        tokenCache.refreshToken = tokens.refresh_token;
+const loadUser = async (req, res, next) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ success: false, error: 'ID do usuário não fornecido no header.' });
     }
 
-    console.log('Tokens atualizados no cache.');
-    oauth2Client.setCredentials(tokens);
-});
+    const userId = authHeader.split(' ')[1];
+    req.userId = userId;
+
+    try {
+        const user = await db.get('SELECT * FROM users WHERE userId = ?', userId);
+
+        if (!user || !user.accessToken) {
+            return res.status(401).json({ success: false, error: 'Usuário não autenticado. Por favor, autentique-se.' });
+        }
+
+        const userOauth2Client = new google.auth.OAuth2(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET,
+            process.env.GOOGLE_REDIRECT_URI
+        );
+
+        userOauth2Client.setCredentials({
+            access_token: user.accessToken,
+            refresh_token: user.refreshToken,
+            expiry_date: user.expiryDate,
+        });
+
+        req.userOauth2Client = userOauth2Client;
+        next();
+
+    } catch (error) {
+        console.error('Erro ao carregar credenciais do usuário:', error);
+        return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
+    }
+};
 
 function decodeBase64Url(base64Url) {
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -83,73 +103,14 @@ function cleanHtmlContent(htmlContent) {
     return $.html();
 }
 
-async function markAsUnread(messageId) {
-    try {
-        await gmail.users.messages.modify({
-            userId: 'me',
-            id: messageId,
-            resource: {
-                addLabelIds: ['UNREAD']
-            }
-        });
-        console.log(`Mensagem ${messageId} marcada como não lida.`);
-        return { success: true };
-    } catch (error) {
-        console.error('Erro ao marcar mensagem como não lida:', error);
-        return { success: false, error: error.message };
-    }
-}
 
-async function markAsRead(messageId) {
-    try {
-        await gmail.users.messages.modify({
-            userId: 'me',
-            id: messageId,
-            resource: {
-                removeLabelIds: ['UNREAD']
-            }
-        });
-        console.log(`Mensagem ${messageId} marcada como lida.`);
-        return { success: true };
-    } catch (error) {
-        console.error('Erro ao marcar mensagem como lida:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-async function unTrash(messageId) {
-    try {
-        await gmail.users.messages.untrash({
-            userId: 'me',
-            id: messageId
-        });
-        console.log(`Mensagem ${messageId} restaurada da lixeira.`);
-        return { success: true };
-    } catch (error) {
-        console.error('Erro ao restaurar mensagem da lixeira:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-async function toTrashBin(messageId) {
-    try {
-        await gmail.users.messages.trash({
-            userId: 'me',
-            id: messageId
-        });
-        console.log(`Mensagem ${messageId} movida para a lixeira.`);
-        return { success: true };
-    } catch (error) {
-        console.error('Erro ao mover mensagem para a lixeira:', error);
-        return { success: false, error: error.message };
-    }
-}
-
-app.get('/', (req, res) => {
-    res.send('Backend do Agregador de Newsletters!');
-});
 
 app.get('/auth/google', (req, res) => {
+    const { userId } = req.query;
+    if (!userId) {
+        return res.status(400).json({ success: false, error: 'ID do usuário não fornecido.' });
+    }
+
     const scopes = [
         'https://www.googleapis.com/auth/gmail.modify',
     ];
@@ -157,24 +118,26 @@ app.get('/auth/google', (req, res) => {
     const authorizationUrl = oauth2Client.generateAuthUrl({
         access_type: 'offline',
         scope: scopes,
+        prompt: 'consent',
+        state: userId
     });
 
     res.redirect(authorizationUrl);
 });
 
+app.use('/api/gmail', loadUser)
+
 app.get('/api/gmail/messages', async (req, res) => {
-    if (!oauth2Client.credentials || !oauth2Client.credentials.access_token) {
-        return res.status(401).send('Usuário não autenticado. Por favor, faça login.');
-    }
+    const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
 
     try {
         const [activeMessages, trashMessages] = await Promise.all([
-            gmail.users.messages.list({
+            userGmail.users.messages.list({
                 userId: 'me',
                 maxResults: 50,
                 q: '(category:promotions OR label:newsletter OR from:noreply OR from:newsletter OR subject:unsubscribe) -in:spam -in:trash'
             }),
-            gmail.users.messages.list({
+            userGmail.users.messages.list({
                 userId: 'me',
                 maxResults: 50,
                 q: '(category:promotions OR label:newsletter OR from:noreply OR from:newsletter OR subject:unsubscribe) in:trash'
@@ -190,7 +153,7 @@ app.get('/api/gmail/messages', async (req, res) => {
 
         if (allMessages && allMessages.length > 0) {
             for (const msg of allMessages) {
-                const messageDetails = await gmail.users.messages.get({
+                const messageDetails = await userGmail.users.messages.get({
                     userId: 'me',
                     id: msg.id,
                     format: 'full'
@@ -253,7 +216,7 @@ app.get('/api/gmail/messages', async (req, res) => {
         if (error.code === 401
             || error.code === 403
             || error.message.includes('no refresh token is set')
-            || error.message.includes('invalid_grant') 
+            || error.message.includes('invalid_grant')
         ) {
             res.status(401).send('Sua sessão expirou. Por favor, reautentique.');
         } else {
@@ -263,28 +226,37 @@ app.get('/api/gmail/messages', async (req, res) => {
 });
 
 app.get('/oauth2callback', async (req, res) => {
-    const { code } = req.query;
+    const { code, state } = req.query;
+    const userId = state;
 
     if (!code) {
         return res.status(400).send('Código de autorização não fornecido.');
+    }
+    if (!userId) {
+        return res.status(400).send('ID do usuário não fornecido.');
     }
 
     try {
         const { tokens } = await oauth2Client.getToken(code);
 
-        tokenCache.accessToken = tokens.access_token;
-        tokenCache.expiryDate = tokens.expiry_date;
-        tokenCache.scope = tokens.scope;
-
-        if (tokens.refresh_token) {
-            tokenCache.refreshToken = tokens.refresh_token;
+        let refreshTokenToSave = tokens.refresh_token;
+        if (!refreshTokenToSave) {
+            const existingUser = await db.get('SELECT refreshToken FROM users WHERE userId = ?', userId);
+            refreshTokenToSave = existingUser ? existingUser.refreshToken : null;
         }
 
-        oauth2Client.setCredentials(tokens);
+        await db.run(
+            `INSERT INTO users (userId, accessToken, refreshToken, expiryDate) VALUES (?, ?, ?, ?)
+             ON CONFLICT(userId) DO UPDATE SET
+                accessToken = excluded.accessToken,
+                refreshToken = excluded.refreshToken,
+                expiryDate = excluded.expiryDate;`,
+            [userId, tokens.access_token, refreshTokenToSave, tokens.expiry_date]
+        );
 
-        console.log('Tokens obtidos e salvos no cache:', tokenCache);
-        res.send('Autenticação bem-sucedida! Você pode fechar esta página.');
-
+        console.log(`Tokens salvos no banco de dados para o usuário: ${userId}`);
+        const frontendUrl = process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
+        res.redirect(`${frontendUrl}/?userId=${userId}`);
     } catch (error) {
         console.error('Erro na autenticação:', error);
         res.status(500).send('Erro na autenticação.');
@@ -292,14 +264,12 @@ app.get('/oauth2callback', async (req, res) => {
 });
 
 app.post('/api/gmail/messages/:messageId/read', async (req, res) => {
-    if (!oauth2Client.credentials || !oauth2Client.credentials.access_token) {
-        return res.status(401).json({ success: false, error: 'Usuário não autenticado.' });
-    }
+    const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
 
     try {
         const { messageId } = req.params;
-        const result = await markAsRead(messageId);
-        res.json(result);
+        await userGmail.users.messages.modify({ userId: 'me', id: messageId, resource: { removeLabelIds: ['UNREAD'] } });
+        res.json({ success: true });
     } catch (error) {
         console.error('Erro na rota de marcar como lida:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -307,14 +277,11 @@ app.post('/api/gmail/messages/:messageId/read', async (req, res) => {
 });
 
 app.post('/api/gmail/messages/:messageId/trash', async (req, res) => {
-    if (!oauth2Client.credentials || !oauth2Client.credentials.access_token) {
-        return res.status(401).json({ success: false, error: 'Usuário não autenticado.' });
-    }
-
+    const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
     try {
         const { messageId } = req.params;
-        const result = await toTrashBin(messageId);
-        res.json(result);
+        await userGmail.users.messages.trash({ userId: 'me', id: messageId });
+        res.json({ success: true });
     } catch (error) {
         console.error('Erro na rota de mover para lixeira:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -322,14 +289,11 @@ app.post('/api/gmail/messages/:messageId/trash', async (req, res) => {
 });
 
 app.post('/api/gmail/messages/:messageId/untrash', async (req, res) => {
-    if (!oauth2Client.credentials || !oauth2Client.credentials.access_token) {
-        return res.status(401).json({ success: false, error: 'Usuário não autenticado.' });
-    }
-
+    const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
     try {
         const { messageId } = req.params;
-        const result = await unTrash(messageId);
-        res.json(result);
+        await userGmail.users.messages.untrash({ userId: 'me', id: messageId });
+        res.json({ success: true });
     } catch (error) {
         console.error('Erro na rota de restaurar da lixeira:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -337,29 +301,21 @@ app.post('/api/gmail/messages/:messageId/untrash', async (req, res) => {
 });
 
 app.post('/api/gmail/messages/:messageId/unread', async (req, res) => {
-    if (!oauth2Client.credentials || !oauth2Client.credentials.access_token) {
-        return res.status(401).json({ success: false, error: 'Usuário não autenticado.' });
-    }
-
+    const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
     try {
         const { messageId } = req.params;
-        const result = await markAsUnread(messageId);
-        res.json(result);
+        await userGmail.users.messages.modify({ userId: 'me', id: messageId, resource: { addLabelIds: ['UNREAD'] } });
+        res.json({ success: true });
     } catch (error) {
         console.error('Erro na rota de marcar como não lida:', error);
         res.status(500).json({ success: false, error: error.message });
     }
-})
+});
 
 async function startServer() {
-    await loadTokensAndOAuth();
+    await initializeDatabase();
     app.listen(PORT, () => {
         console.log(`Servidor rodando em http://localhost:${PORT}`);
-        console.log(`Acesse: http://localhost:${PORT}`);
-        if (!oauth2Client.credentials || !oauth2Client.credentials.accessToken) {
-            console.log(`Para iniciar autenticação: http://localhost:${PORT}/auth/google`);
-        }
-        console.log(`Para buscar newsletters (após autenticar): http://localhost:${PORT}/api/gmail/messages`);
     });
 }
 

@@ -1,8 +1,12 @@
 import axios from 'axios';
 
-export const handleMarkAsRead = async (backendUrl: string, messageId: string) => {
+export const handleMarkAsRead = async (backendUrl: string, messageId: string, userId: string) => {
     try {
-        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/read`);
+        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/read`, {}, {
+            headers: {
+                'Authorization': `Bearer ${userId}`
+            }
+        });
         return response.data;
     } catch (error) {
         console.error('Erro ao marcar como lida:', error);
@@ -13,9 +17,13 @@ export const handleMarkAsRead = async (backendUrl: string, messageId: string) =>
     }
 };
 
-export const handleMoveToTrash = async (backendUrl: string, messageId: string) => {
+export const handleMoveToTrash = async (backendUrl: string, messageId: string, userId: string) => {
     try {
-        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/trash`);
+        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/trash`, {}, {
+            headers: {
+                'Authorization': `Bearer ${userId}`
+            }
+        });
         return response.data;
     } catch (error) {
         console.error('Erro ao mover para lixeira:', error);
@@ -26,9 +34,13 @@ export const handleMoveToTrash = async (backendUrl: string, messageId: string) =
     }
 };
 
-export const handleRestoreFromTrash = async (backendUrl: string, messageId: string) => {
+export const handleRestoreFromTrash = async (backendUrl: string, messageId: string, userId: string) => {
     try {
-        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/untrash`);
+        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/untrash`, {}, {
+            headers: {
+                'Authorization': `Bearer ${userId}`
+            }
+        });
         return response.data;
     } catch (error) {
         console.error('Erro ao restaurar da lixeira:', error);
@@ -39,9 +51,13 @@ export const handleRestoreFromTrash = async (backendUrl: string, messageId: stri
     }
 };
 
-export const handleMarkAsUnread = async (backendUrl: string, messageId: string) => {
+export const handleMarkAsUnread = async (backendUrl: string, messageId: string, userId: string) => {
     try {
-        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/unread`);
+        const response = await axios.post(`${backendUrl}/api/gmail/messages/${messageId}/unread`, {}, {
+            headers: {
+                'Authorization': `Bearer ${userId}`
+            }
+        });
         return response.data;
     } catch (error) {
         console.error('Erro ao marcar como não lida:', error);
