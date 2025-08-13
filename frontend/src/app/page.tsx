@@ -41,7 +41,7 @@ export default function Home() {
   const handleLogin = () => {
     const tempUserId = `user_${Date.now()}`;
     localStorage.setItem('userId', tempUserId);
-    window.location.href = `${BACKEND_URL}/auth/google?userId=${tempUserId}`;
+    window.location.href = `${BACKEND_URL}/api/auth/google?userId=${tempUserId}`;
   };
 
   const getFilteredNewsletters = useCallback(() => {

@@ -1,0 +1,28 @@
+{
+    "builds": [
+        {
+            "src": "backend/index.js",
+            "use": "@vercel/node",
+            "config": {
+                "includeFiles": [
+                    "backend/database/usersTokens.sqlite",
+                    "backend/package.json"
+                ]
+            }
+        },
+        {
+            "src": "frontend/next.config.js",
+            "use": "@vercel/next"
+        }
+    ],
+    "routes": [
+        {
+            "src": "/api/(.*)",
+            "dest": "backend/index.js"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "frontend/$1"
+        }
+    ]
+}

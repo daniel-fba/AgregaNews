@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 3001;
 let db;
 
 app.use(cors({
-    origin: 'http://localhost:3000',
+    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     allowedHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -28,8 +28,10 @@ const oauth2Client = new google.auth.OAuth2(
 
 async function initializeDatabase() {
     try {
+        const dbPath = './database';
+        require('fs').mkdirSync(dbPath, { recursive: true });
         db = await open({
-            filename: './usersTokens.sqlite',
+            filename: `${dbPath}/usersTokens.sqlite`,
             driver: sqlite3.Database
         });
 
@@ -103,9 +105,9 @@ function cleanHtmlContent(htmlContent) {
     return $.html();
 }
 
+app.get("/api", (req, res) => res.send("Servidor do AgregaNews"));
 
-
-app.get('/auth/google', (req, res) => {
+app.get('/api/auth/google', (req, res) => {
     const { userId } = req.query;
     if (!userId) {
         return res.status(400).json({ success: false, error: 'ID do usuário não fornecido.' });
@@ -225,7 +227,7 @@ app.get('/api/gmail/messages', async (req, res) => {
     }
 });
 
-app.get('/oauth2callback', async (req, res) => {
+app.get('/api/oauth2callback', async (req, res) => {
     const { code, state } = req.query;
     const userId = state;
 
@@ -312,11 +314,6 @@ app.post('/api/gmail/messages/:messageId/unread', async (req, res) => {
     }
 });
 
-async function startServer() {
-    await initializeDatabase();
-    app.listen(PORT, () => {
-        console.log(`Servidor rodando em http://localhost:${PORT}`);
-    });
-}
+initializeDatabase();
 
-startServer();
+module.exports = app;
