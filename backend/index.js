@@ -6,6 +6,7 @@ const cheerio = require('cheerio');
 const cors = require('cors');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -28,10 +29,18 @@ const oauth2Client = new google.auth.OAuth2(
 
 async function initializeDatabase() {
     try {
-        const dbPath = './database';
-        require('fs').mkdirSync(dbPath, { recursive: true });
+        const dbPath = process.env.NODE_ENV === 'production'
+            ? '/tmp'
+            : path.join(__dirname, 'database');
+
+        if (process.env.NODE_ENV !== 'production') {
+            require('fs').mkdirSync(dbPath, { recursive: true });
+        }
+
+        const dbFilename = path.join(dbPath, 'usersTokens.sqlite');
+
         db = await open({
-            filename: `${dbPath}/usersTokens.sqlite`,
+            filename: dbFilename,
             driver: sqlite3.Database
         });
 
@@ -43,7 +52,7 @@ async function initializeDatabase() {
             expiryDate INTEGER
             );
             `);
-        console.log('Banco de dados inicializado.');
+        console.log('Banco de dados inicializado em:', dbFilename);
     } catch (error) {
         console.error('Erro ao inicializar o banco de dados:', error);
         process.exit(1);
