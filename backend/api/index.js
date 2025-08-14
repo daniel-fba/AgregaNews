@@ -11,7 +11,7 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-let db;
+let dbPromise = null;
 
 app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
@@ -27,6 +27,13 @@ const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_REDIRECT_URI
 );
 
+function getDatabase() {
+    if (!dbPromise) {
+        dbPromise = initializeDatabase();
+    }
+    return dbPromise;
+}
+
 async function initializeDatabase() {
     try {
         const dbPath = process.env.NODE_ENV === 'production'
@@ -39,7 +46,7 @@ async function initializeDatabase() {
 
         const dbFilename = path.join(dbPath, 'usersTokens.sqlite');
 
-        db = await open({
+        const db = await open({
             filename: dbFilename,
             driver: sqlite3.Database
         });
@@ -53,9 +60,10 @@ async function initializeDatabase() {
             );
             `);
         console.log('Banco de dados inicializado em:', dbFilename);
+        return db;
     } catch (error) {
         console.error('Erro ao inicializar o banco de dados:', error);
-        process.exit(1);
+        throw error;
     }
 }
 
@@ -69,6 +77,7 @@ const loadUser = async (req, res, next) => {
     req.userId = userId;
 
     try {
+        const db = await getDatabase();
         const user = await db.get('SELECT * FROM users WHERE userId = ?', userId);
 
         if (!user || !user.accessToken) {
@@ -136,7 +145,7 @@ app.get('/api/auth/google', (req, res) => {
     res.redirect(authorizationUrl);
 });
 
-app.use('/api/gmail', loadUser)
+app.use('/api/gmail', loadUser);
 
 app.get('/api/gmail/messages', async (req, res) => {
     const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
@@ -248,6 +257,7 @@ app.get('/api/oauth2callback', async (req, res) => {
     }
 
     try {
+        const db = await getDatabase();
         const { tokens } = await oauth2Client.getToken(code);
 
         let refreshTokenToSave = tokens.refresh_token;
@@ -323,12 +333,14 @@ app.post('/api/gmail/messages/:messageId/unread', async (req, res) => {
     }
 });
 
-initializeDatabase();
-
-if(process.env.NODE_ENV === 'development') {
-    app.listen(PORT, () => {
-        console.log(`Servidor rodando na porta ${PORT}`);
+if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+    getDatabase().then(() => {
+        app.listen(PORT, () => {
+            console.log(`Servidor rodando na porta ${PORT}`);
+        });
+    }).catch(err => {
+        console.error('Falha ao inicializar o servidor:', err);
+        process.exit(1);
     });
 }
-
 module.exports = app;
