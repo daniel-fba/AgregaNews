@@ -39,9 +39,8 @@ export default function Home() {
   }, []);
 
   const handleLogin = () => {
-    const tempUserId = `user_${Date.now()}`;
-    localStorage.setItem('userId', tempUserId);
-    window.location.href = `${BACKEND_URL}/api/auth/google?userId=${tempUserId}`;
+    const idForAuth = userId || crypto.randomUUID();
+    window.location.href = `${BACKEND_URL}/api/auth/google?userId=${idForAuth}`;
   };
 
   const getFilteredNewsletters = useCallback(() => {
@@ -188,7 +187,7 @@ export default function Home() {
       cleanedHtml: newsletter.isInTrash
         ? newsletter.cleanedHtml.substring(0, 80000) // Apenas 80KB para lixeira
         : newsletter.cleanedHtml.substring(0, 100000), // 100KB para ativas
-      originalHtml: '',
+      // originalHtml: '',
       isRead: newsletter.isRead,
       isInTrash: newsletter.isInTrash,
       labels: newsletter.labels
@@ -214,7 +213,9 @@ export default function Home() {
       const dataString = JSON.stringify(finalNewsletters);
       const sizeInMB = (dataString.length / (1024 * 1024)).toFixed(2);
 
-      console.log(`Tentando salvar ${sizeInMB}MB no localStorage`);
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`Tentando salvar ${sizeInMB}MB no localStorage`);
+      }
 
       if (dataString.length > 4 * 1024 * 1024) {
         console.warn('Dados muito grandes, reduzindo ainda mais...');
@@ -230,12 +231,16 @@ export default function Home() {
         localStorage.setItem('newsletters', JSON.stringify(emergencyCut));
         localStorage.setItem('lastSync', new Date().toISOString());
 
-        console.log(`Cache de emergência: ${emergencyCut.length} newsletters (reduzidas)`);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`Cache de emergência: ${emergencyCut.length} newsletters (reduzidas)`);
+        }
       } else {
         localStorage.setItem('newsletters', dataString);
         localStorage.setItem('lastSync', new Date().toISOString());
 
-        console.log(`Cache atualizado: ${finalNewsletters.length} newsletters (${finalNewsletters.filter(n => !n.isInTrash).length} ativas, ${finalNewsletters.filter(n => n.isInTrash).length} na lixeira) - ${sizeInMB}MB`);
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`Cache atualizado: ${finalNewsletters.length} newsletters (${finalNewsletters.filter(n => !n.isInTrash).length} ativas, ${finalNewsletters.filter(n => n.isInTrash).length} na lixeira) - ${sizeInMB}MB`);
+        }
       }
 
     } catch (error) {
@@ -272,15 +277,23 @@ export default function Home() {
       }
     } catch (err) {
       console.error('Erro ao buscar newsletters:', err);
-      if (axios.isAxiosError(err) && err.response?.status === 401) {
-        setError('Não autenticado ou sessão expirada. Por favor, faça login novamente.');
-      } else {
-        setError('Erro ao buscar newsletters. Carregando do cache local...');
-        const cached = loadFromLocalStorage();
-        setNewsletters(cached);
-        if (cached.length > 0) {
-          showTemporaryToast(`${cached.length} newsletters carregadas do cache local.`, 'success');
+      if (axios.isAxiosError(err)) {
+        if (
+          err.response?.status === 401) {
+          setError('Não autenticado ou sessão expirada. Por favor, faça login novamente.');
+        } else if (!err.response) {
+          setError('Erro de conexão. Não foi possível conectar ao servidor.');
+        } else {
+          setError('Erro ao buscar newsletters. Carregando do cache local...');
         }
+      } else {
+        setError('Erro desconhecido ao buscar newsletters. Carregando do cache local...');
+      }
+
+      const cached = loadFromLocalStorage();
+      setNewsletters(cached);
+      if (cached.length > 0) {
+        showTemporaryToast(`${cached.length} newsletters carregadas do cache local.`, 'success');
       }
     } finally {
       setLoading(false);
@@ -309,8 +322,10 @@ export default function Home() {
   }, [fetchNewslettersFromGmail]);
 
   useEffect(() => {
-    loadInitialData();
-  }, [loadInitialData]);
+    if (userId) {
+      loadInitialData();
+    }
+  }, [userId, loadInitialData]);
 
   const showTemporaryToast = (message: string, type: 'success' | 'error') => {
     setShowToast({ message, type });
@@ -326,7 +341,7 @@ export default function Home() {
         <p className="text-lg mb-4 text-snow">Para continuar faça login com sua conta do Google.</p>
         <button
           onClick={handleLogin}
-          className="bg-blue-600 hover:bg-blue-700 text-snow text-lg font-bold py-3 px-6 rounded-md transition-colors duration-300"
+          className="bg-blue-600 hover:bg-blue-700 text-snow text-lg font-bold py-3 px-6 rounded-md transition-colors duration-300 cursor-pointer"
         >
           Entrar com Google
         </button>
@@ -348,12 +363,18 @@ export default function Home() {
         <Image src="/error-icon.png" alt="Erro" className='mb-4 max-w-xs' width={200} height={200} />
         <h1 className="text-4xl font-bold mb-8 ">Erro: {error}</h1>
         {error && (error.includes('autenticado') || error.includes('login')) && (
-          <p className="text-lg">
-            <a href={`${BACKEND_URL}/auth/google?userId=${userId}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">
+          <>
+            <p className="text-lg">
               Clique aqui para autenticar com o Google
-            </a>
-            {' '}e depois recarregue esta página.
-          </p>
+
+            </p>
+            <button
+              onClick={handleLogin}
+              className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-300 ease-in-out cursor-pointer"
+            >
+              Login com Google
+            </button>
+          </>
         )}
       </main>
     );
