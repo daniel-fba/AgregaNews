@@ -31,7 +31,7 @@ async function initializeDatabase() {
     try {
         const dbPath = process.env.NODE_ENV === 'production'
             ? '/tmp'
-            : path.join(__dirname, 'database');
+            : path.join(__dirname, '..', 'database');
 
         if (process.env.NODE_ENV !== 'production') {
             require('fs').mkdirSync(dbPath, { recursive: true });
