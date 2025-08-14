@@ -266,7 +266,7 @@ app.get('/api/oauth2callback', async (req, res) => {
         );
 
         console.log(`Tokens salvos no banco de dados para o usuário: ${userId}`);
-        const frontendUrl = process.env.NEXT_PUBLIC_FRONTEND_URL || 'http://localhost:3000';
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
         res.redirect(`${frontendUrl}/?userId=${userId}`);
     } catch (error) {
         console.error('Erro na autenticação:', error);
@@ -324,5 +324,11 @@ app.post('/api/gmail/messages/:messageId/unread', async (req, res) => {
 });
 
 initializeDatabase();
+
+if(process.env.NODE_ENV === 'development') {
+    app.listen(PORT, () => {
+        console.log(`Servidor rodando na porta ${PORT}`);
+    });
+}
 
 module.exports = app;
