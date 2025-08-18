@@ -19,6 +19,8 @@ export default function Home() {
 
   const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
+
+  // Efeito para obter o userId. Procura primeiro na URL (após o redirecionamento) e depois no localStorage
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const urlUserId = urlParams.get('userId');
@@ -38,11 +40,39 @@ export default function Home() {
     }
   }, []);
 
+  // Efeito para carregar os dados iniciais assim que o userId estiver disponível
+  useEffect(() => {
+    if (userId) {
+      loadInitialData();
+    }
+  }, [userId, loadInitialData]);
+
+  // Efeito para adicionar navegação por setas quando uma newsletter está aberta
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (!selectedNewsletter) return;
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        navigateNewsletter('next');
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        navigateNewsletter('previous');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    // Limpa o listener quando o componente desmonta ou a dependência muda
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [selectedNewsletter, navigateNewsletter]);
+
+  // Redireciona o usuário para a rota de autenticação do Google no backend
   const handleLogin = () => {
-    const idForAuth = userId || crypto.randomUUID();
+    const idForAuth = userId || crypto.randomUUID(); // Usa o userId existente ou gera um novo
     window.location.href = `${BACKEND_URL}/api/auth/google?userId=${idForAuth}`;
   };
 
+  // Filtra a lista de newsletters com base no filtro selecionado
   const getFilteredNewsletters = useCallback(() => {
     switch (filterMode) {
       case 'active':
@@ -55,6 +85,7 @@ export default function Home() {
     }
   }, [newsletters, filterMode]);
 
+  // Função centralizada para executar ações (ler, não ler, lixeira, restaurar)
   const handleAction = useCallback(async (action: 'read' | 'unread' | 'trash' | 'untrash', newsletterToUpdate: Newsletter) => {
     try {
       let result;
@@ -75,7 +106,7 @@ export default function Home() {
               'restaurada da lixeira';
         showTemporaryToast(`Newsletter ${actionText} no Gmail.`, 'success');
 
-        // Atualiza o estado da newsletter selecionada no modal, se ainda estiver aberto
+        // Atualiza o estado da newsletter selecionada (se estiver aberta no modal)
         setSelectedNewsletter(prev => prev ? {
           ...prev,
           isRead: action === 'read' ? true : action === 'unread' ? false : prev.isRead,
@@ -86,7 +117,7 @@ export default function Home() {
                 action === 'untrash' ? prev.labels.filter(label => label !== 'TRASH') : prev.labels
         } : null);
 
-        // Atualizar o estado 'newsletters' localmente e salvar no localStorage
+        // Atualiza a lista principal de newsletters localmente
         const updatedNewsletters = newsletters.map(nl =>
           nl.messageId === newsletterToUpdate.messageId
             ? {
@@ -121,15 +152,19 @@ export default function Home() {
     }
   }, [newsletters, BACKEND_URL, userId]);
 
+  // Define a newsletter selecionada e a marca como lida
   const handleNewsletterClick = (newsletter: Newsletter) => {
     setSelectedNewsletter(newsletter);
-    handleAction('read', newsletter);
+    if (!newsletter.isRead) {
+      handleAction('read', newsletter);
+    }
   }
 
   const handleCloseModal = () => {
     setSelectedNewsletter(null);
   }
 
+  // Calcula o índice da newsletter atual na lista filtrada
   const getCurrentNewsletterIndex = useCallback(() => {
     if (!selectedNewsletter) return -1;
     const filteredNewsletters = getFilteredNewsletters().sort((a, b) =>
@@ -154,45 +189,33 @@ export default function Home() {
       newIndex = currentIndex - 1 >= 0 ? currentIndex - 1 : filteredNewsletters.length - 1;
     }
 
-    setSelectedNewsletter(filteredNewsletters[newIndex]);
-    handleAction('read', filteredNewsletters[newIndex]);
+    const newNewsletter = filteredNewsletters[newIndex];
+    setSelectedNewsletter(newNewsletter);
+    if (!newNewsletter.isRead) {
+      handleAction('read', newNewsletter);
+    }
   }, [selectedNewsletter, getFilteredNewsletters, handleAction]);
 
-  useEffect(() => {
-    const handleKeyPress = (event: KeyboardEvent) => {
-      if (!selectedNewsletter) return;
-
-      if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        navigateNewsletter('next');
-      } else if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        navigateNewsletter('previous');
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [selectedNewsletter, navigateNewsletter]);
-
+  // Salva a lista de newsletters no localStorage
   const saveToLocalStorage = (newsletters: Newsletter[]) => {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
+    // Prepara o objeto para armazenamento, reduzindo o tamanho do HTML
     const NewsletterForStorage = (newsletter: Newsletter) => ({
       messageId: newsletter.messageId,
       subject: newsletter.subject,
       from: newsletter.from,
       date: newsletter.date,
       cleanedHtml: newsletter.isInTrash
-        ? newsletter.cleanedHtml.substring(0, 80000) // Apenas 80KB para lixeira
-        : newsletter.cleanedHtml.substring(0, 100000), // 100KB para ativas
-      // originalHtml: '',
+        ? newsletter.cleanedHtml.substring(0, 80000) // Limita o HTML de itens na lixeira
+        : newsletter.cleanedHtml.substring(0, 100000), // Limita o HTML de itens ativos
       isRead: newsletter.isRead,
       isInTrash: newsletter.isInTrash,
       labels: newsletter.labels
     });
 
+    // Filtra newsletters na lixeira com mais de 30 dias
     const filteredNewsletters = newsletters
       .filter(newsletter => {
         if (newsletter.isInTrash) {
@@ -202,6 +225,7 @@ export default function Home() {
       })
       .map(NewsletterForStorage);
 
+    // Limita o número total de newsletters no cache, priorizando as mais recentes
     const maxCacheSize = 200;
     const finalNewsletters = filteredNewsletters.length > maxCacheSize
       ? filteredNewsletters
@@ -209,7 +233,7 @@ export default function Home() {
         .slice(0, maxCacheSize)
       : filteredNewsletters;
 
-    try { // Tenta salvar normalmente
+    try {
       const dataString = JSON.stringify(finalNewsletters);
       const sizeInMB = (dataString.length / (1024 * 1024)).toFixed(2);
 
@@ -217,34 +241,26 @@ export default function Home() {
         console.log(`Tentando salvar ${sizeInMB}MB no localStorage`);
       }
 
-      if (dataString.length > 4 * 1024 * 1024) {
+      // Se os dados ainda forem muito grandes, reduz ainda mais
+      if (dataString.length > 4 * 1024 * 1024) { // Limite de segurança (localStorage é 5MB a 10MB)
         console.warn('Dados muito grandes, reduzindo ainda mais...');
-
-        // Última tentativa: salva apenas 100 newsletters com HTML reduzido
         const emergencyCut = finalNewsletters
-          .slice(0, 100)
+          .slice(0, 100) // Pega apenas as 100 mais recentes
           .map(nl => ({
             ...nl,
-            cleanedHtml: nl.cleanedHtml.substring(0, 100000) // Máximo 100KB cada
+            cleanedHtml: nl.cleanedHtml.substring(0, 100000)
           }));
 
         localStorage.setItem('newsletters', JSON.stringify(emergencyCut));
         localStorage.setItem('lastSync', new Date().toISOString());
-
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`Cache de emergência: ${emergencyCut.length} newsletters (reduzidas)`);
-        }
       } else {
+        // Salva normalmente
         localStorage.setItem('newsletters', dataString);
         localStorage.setItem('lastSync', new Date().toISOString());
-
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`Cache atualizado: ${finalNewsletters.length} newsletters (${finalNewsletters.filter(n => !n.isInTrash).length} ativas, ${finalNewsletters.filter(n => n.isInTrash).length} na lixeira) - ${sizeInMB}MB`);
-        }
       }
 
     } catch (error) {
-      console.error('Erro ao salvar no localStorage:', error);
+      console.error('Erro ao salvar no localStorage (provavelmente excedeu a cota):', error);
     }
   };
 
@@ -253,6 +269,7 @@ export default function Home() {
     return saved ? JSON.parse(saved) : [];
   };
 
+  // Busca as newsletters do backend
   const fetchNewslettersFromGmail = useCallback(async () => {
     if (!userId) {
       setError('Por favor, faça o login para buscar newsletters.');
@@ -264,9 +281,7 @@ export default function Home() {
     setError(null);
     try {
       const response = await axios.get(`${BACKEND_URL}/api/gmail/messages`, {
-        headers: {
-          'Authorization': `Bearer ${userId}`
-        }
+        headers: { 'Authorization': `Bearer ${userId}` }
       });
       const data = response.data;
 
@@ -278,8 +293,7 @@ export default function Home() {
     } catch (err) {
       console.error('Erro ao buscar newsletters:', err);
       if (axios.isAxiosError(err)) {
-        if (
-          err.response?.status === 401) {
+        if (err.response?.status === 401) {
           setError('Não autenticado ou sessão expirada. Por favor, faça login novamente.');
         } else if (!err.response) {
           setError('Erro de conexão. Não foi possível conectar ao servidor.');
@@ -290,6 +304,7 @@ export default function Home() {
         setError('Erro desconhecido ao buscar newsletters. Carregando do cache local...');
       }
 
+      // Em caso de erro, tenta carregar do cache
       const cached = loadFromLocalStorage();
       setNewsletters(cached);
       if (cached.length > 0) {
@@ -300,6 +315,7 @@ export default function Home() {
     }
   }, [BACKEND_URL, userId]);
 
+  // Tenta o cache primeiro, se vazio, busca na API.
   const loadInitialData = useCallback(() => {
     const cached = loadFromLocalStorage();
     if (cached.length > 0) {
@@ -321,12 +337,8 @@ export default function Home() {
     }
   }, [fetchNewslettersFromGmail]);
 
-  useEffect(() => {
-    if (userId) {
-      loadInitialData();
-    }
-  }, [userId, loadInitialData]);
 
+  // Exibe uma notificação (toast) por 3 segundos.
   const showTemporaryToast = (message: string, type: 'success' | 'error') => {
     setShowToast({ message, type });
     setTimeout(() => {
@@ -334,6 +346,8 @@ export default function Home() {
     }, 3000);
   };
 
+
+  // Se não houver userId, renderiza a tela de login.
   if (!userId) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-cinereous text-black">
@@ -349,6 +363,7 @@ export default function Home() {
     );
   }
 
+  // Durante o carregamento inicial, exibe uma mensagem de carregamento.
   if (loading) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-cinereous text-black">
@@ -357,6 +372,7 @@ export default function Home() {
     );
   }
 
+  // Se ocorrer um erro, exibe a tela de erro com a mensagem e opção de login.
   if (error) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-almond text-black">
@@ -366,7 +382,6 @@ export default function Home() {
           <>
             <p className="text-lg">
               Clique aqui para autenticar com o Google
-
             </p>
             <button
               onClick={handleLogin}
@@ -382,18 +397,21 @@ export default function Home() {
 
   const filteredNewsletters = getFilteredNewsletters()
 
+  // Página Principal
   return (
     <main className="flex min-h-screen flex-col p-4 md:p-6 lg:p-8 bg-cinereous">
       <h1 className="text-5xl md:text-6xl font-extrabold text-center text-snow mb-8 tracking-wide">
         AgregaNews
       </h1>
 
+      {/* Componente para notificações */}
       {showToast && (
         <div className={`fixed bottom-4 right-4 p-4 rounded-lg shadow-lg text-snow ${showToast.type === 'success' ? 'bg-green-500' : 'bg-red-500'} z-50`}>
           {showToast.message}
         </div>
       )}
 
+      {/* Barra de controle com estatísticas */}
       <div className="flex flex-col md:flex-row justify-between items-center mx-auto mb-6 gap-y-4 md:gap-y-0">
         <div className="flex flex-col md:flex-row items-center gap-y-2 md:gap-y-0 md:gap-x-4 bg-almond p-4 rounded-lg shadow-md">
           <p className="text-lg text-black ">
@@ -401,6 +419,7 @@ export default function Home() {
           </p>
 
           <div className="flex gap-x-2">
+            {/* Botões de Filtro */}
             <button
               type='button'
               title='Mostrar todas as newsletters'
@@ -438,6 +457,7 @@ export default function Home() {
               Lixeira
             </button>
           </div>
+          {/* Botão de Sincronização */}
           <button
             type='button'
             title='Sincronizar com Gmail'
@@ -449,14 +469,15 @@ export default function Home() {
             Sincronizar com Gmail
           </button>
         </div>
-
       </div>
 
+      {/* Layout principal com a lista e o visualizador */}
       <div className='flex flex-col lg:flex-row h-screen'>
         {newsletters.length === 0 ? (
           <p className="text-center text-xl text-black">Nenhuma newsletter encontrada. Verifique se há e-mails no Gmail e se o backend está autenticado e sincronizado.</p>
         ) : (
           <>
+            {/* Painel da Lista de Newsletters */}
             <NewsletterList
               newsletters={filteredNewsletters}
               onSelectNewsletter={handleNewsletterClick}
@@ -464,6 +485,7 @@ export default function Home() {
               selectedNewsletter={selectedNewsletter}
             />
 
+            {/* Painel do Visualizador de Newsletter */}
             <div className="flex-1 lg:w-3/4 h-full overflow-y-auto p-4 lg:p-6">
               <NewsletterViewer
                 newsletter={selectedNewsletter}

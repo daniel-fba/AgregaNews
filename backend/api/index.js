@@ -13,6 +13,7 @@ const PORT = process.env.PORT || 3001;
 
 let dbPromise = null;
 
+// Habilita o CORS para permitir requisições do frontend
 app.use(cors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3000',
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
@@ -21,6 +22,7 @@ app.use(cors({
 
 app.use(express.json());
 
+// Configuração do cliente OAuth2 para autenticação com a API do Google
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
@@ -36,10 +38,12 @@ function getDatabase() {
 
 async function initializeDatabase() {
     try {
+        // Define o caminho do banco de dados de forma diferente para produção (Vercel usa /tmp) e desenvolvimento
         const dbPath = process.env.NODE_ENV === 'production'
             ? '/tmp'
             : path.join(__dirname, '..', 'database');
 
+        // Em desenvolvimento, cria o diretório do banco de dados se ele não existir
         if (process.env.NODE_ENV !== 'production') {
             require('fs').mkdirSync(dbPath, { recursive: true });
         }
@@ -67,12 +71,14 @@ async function initializeDatabase() {
     }
 }
 
+// Carrega as credenciais do usuário do banco de dados e configura um cliente OAuth2 específico para ele
 const loadUser = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
         return res.status(401).json({ success: false, error: 'ID do usuário não fornecido no header.' });
     }
 
+    // Extrai o userId do header 'Authorization: Bearer <userId>'
     const userId = authHeader.split(' ')[1];
     req.userId = userId;
 
@@ -84,6 +90,7 @@ const loadUser = async (req, res, next) => {
             return res.status(401).json({ success: false, error: 'Usuário não autenticado. Por favor, autentique-se.' });
         }
 
+        // Cria um novo cliente OAuth2 para o usuário da requisição
         const userOauth2Client = new google.auth.OAuth2(
             process.env.GOOGLE_CLIENT_ID,
             process.env.GOOGLE_CLIENT_SECRET,
@@ -96,6 +103,7 @@ const loadUser = async (req, res, next) => {
             expiry_date: user.expiryDate,
         });
 
+        // Anexa o cliente OAuth2 configurado ao objeto da requisição
         req.userOauth2Client = userOauth2Client;
         next();
 
@@ -105,6 +113,7 @@ const loadUser = async (req, res, next) => {
     }
 };
 
+// Decodifica uma string em Base64Url (usada pela API do Gmail).
 function decodeBase64Url(base64Url) {
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
     return Buffer.from(base64, 'base64').toString('utf-8');
@@ -115,16 +124,18 @@ function cleanHtmlContent(htmlContent) {
 
     const $ = cheerio.load(htmlContent);
 
+    // Remove tags que não são de conteúdo (scripts, styles, etc.)
     $('script, style, link, meta').remove();
-    // $('img[src*="pixel"], img[src*="tracker"]').remove();
-    // $('[aria-label="unsubscribe"], [href*="unsubscribe"]').remove();
-    // $('[class*="ad"], [id*="ad"]').remove();
+    // $('img[src*="pixel"], img[src*="tracker"]').remove(); // Remove pixels de rastreamento
+    // $('[aria-label="unsubscribe"], [href*="unsubscribe"]').remove(); // Remove links de cancelamento de inscrição
+    // $('[class*="ad"], [id*="ad"]').remove(); // Remove elementos de anúncio
 
     return $.html();
 }
 
 app.get("/api", (req, res) => res.send("Servidor do AgregaNews"));
 
+// Rota para iniciar a autenticação do Google
 app.get('/api/auth/google', (req, res) => {
     const { userId } = req.query;
     if (!userId) {
@@ -132,25 +143,29 @@ app.get('/api/auth/google', (req, res) => {
     }
 
     const scopes = [
-        'https://www.googleapis.com/auth/gmail.modify',
+        'https://www.googleapis.com/auth/gmail.modify', // Permissão para ler e modificar e-mails
     ];
 
+    // Gera a URL de autorização do Google
     const authorizationUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
+        access_type: 'offline', // Solicita um refresh_token
         scope: scopes,
         prompt: 'consent',
-        state: userId
+        state: userId // Passa o userId para a rota de callback
     });
 
     res.redirect(authorizationUrl);
 });
 
+// Aplica o middleware loadUser a todas as rotas /api/gmail
 app.use('/api/gmail', loadUser);
 
+// Rota para buscar as mensagens do usuário
 app.get('/api/gmail/messages', async (req, res) => {
     const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
 
     try {
+        // Busca e-mails na caixa de entrada e na lixeira simultaneamente
         const [activeMessages, trashMessages] = await Promise.all([
             userGmail.users.messages.list({
                 userId: 'me',
@@ -182,6 +197,7 @@ app.get('/api/gmail/messages', async (req, res) => {
                 const payload = messageDetails.data.payload;
                 const messageLabelIds = messageDetails.data.labelIds || [];
 
+                // Extrai o conteúdo HTML do corpo do e-mail
                 let htmlContent = '';
                 if (payload.parts) {
                     const htmlPart = payload.parts.find(part => part.mimeType === 'text/html' && part.body && part.body.data);
@@ -194,6 +210,7 @@ app.get('/api/gmail/messages', async (req, res) => {
 
                 if (htmlContent) {
                     const isInTrash = messageLabelIds.includes('TRASH');
+                    // Limpa o HTML. Para e-mails na lixeira, trunca para economizar espaço no cache.
                     const cleanedHtml = isInTrash ?
                         cleanHtmlContent(htmlContent).substring(0, 10000) :
                         cleanHtmlContent(htmlContent);
@@ -202,6 +219,7 @@ app.get('/api/gmail/messages', async (req, res) => {
                     const senderHeader = payload.headers.find(h => h.name === 'From');
                     const dateHeader = payload.headers.find(h => h.name === 'Date');
 
+                    // Monta o objeto da newsletter
                     const newsletterData = {
                         messageId: msg.id,
                         subject: subjectHeader ? subjectHeader.value : 'Sem assunto',
@@ -219,6 +237,7 @@ app.get('/api/gmail/messages', async (req, res) => {
             }
         }
 
+        // Ordena as newsletters por data decrescente: primeiro as ativas, depois as da lixeira
         processedNewsletters.sort((a, b) => {
             if (a.isInTrash !== b.isInTrash) {
                 return a.isInTrash ? 1 : -1;
@@ -245,9 +264,10 @@ app.get('/api/gmail/messages', async (req, res) => {
     }
 });
 
+// Rota de callback do OAuth2 do Google
 app.get('/api/oauth2callback', async (req, res) => {
     const { code, state } = req.query;
-    const userId = state;
+    const userId = state; // O userId foi passado pelo parâmetro 'state'
 
     if (!code) {
         return res.status(400).send('Código de autorização não fornecido.');
@@ -258,6 +278,7 @@ app.get('/api/oauth2callback', async (req, res) => {
 
     try {
         const db = await getDatabase();
+        // Troca o código de autorização por tokens de acesso e de atualização
         const { tokens } = await oauth2Client.getToken(code);
 
         let refreshTokenToSave = tokens.refresh_token;
@@ -284,6 +305,7 @@ app.get('/api/oauth2callback', async (req, res) => {
     }
 });
 
+// Rota para marcar uma mensagem como lida (remove 'UNREAD')
 app.post('/api/gmail/messages/:messageId/read', async (req, res) => {
     const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
 
@@ -297,6 +319,7 @@ app.post('/api/gmail/messages/:messageId/read', async (req, res) => {
     }
 });
 
+// Rota para mover uma mensagem para a lixeira
 app.post('/api/gmail/messages/:messageId/trash', async (req, res) => {
     const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
     try {
@@ -309,6 +332,7 @@ app.post('/api/gmail/messages/:messageId/trash', async (req, res) => {
     }
 });
 
+// Rota para restaurar uma mensagem da lixeira
 app.post('/api/gmail/messages/:messageId/untrash', async (req, res) => {
     const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
     try {
@@ -321,6 +345,7 @@ app.post('/api/gmail/messages/:messageId/untrash', async (req, res) => {
     }
 });
 
+// Rota para marcar uma mensagem como não lida (adiciona 'UNREAD')
 app.post('/api/gmail/messages/:messageId/unread', async (req, res) => {
     const userGmail = google.gmail({ version: 'v1', auth: req.userOauth2Client });
     try {
@@ -343,4 +368,6 @@ if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
         process.exit(1);
     });
 }
+
+// Exporta o app para ser usado pelo ambiente serverless do Vercel
 module.exports = app;
