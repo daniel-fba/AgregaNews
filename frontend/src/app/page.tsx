@@ -40,32 +40,6 @@ export default function Home() {
     }
   }, []);
 
-  // Efeito para carregar os dados iniciais assim que o userId estiver disponível
-  useEffect(() => {
-    if (userId) {
-      loadInitialData();
-    }
-  }, [userId, loadInitialData]);
-
-  // Efeito para adicionar navegação por setas quando uma newsletter está aberta
-  useEffect(() => {
-    const handleKeyPress = (event: KeyboardEvent) => {
-      if (!selectedNewsletter) return;
-
-      if (event.key === 'ArrowRight') {
-        event.preventDefault();
-        navigateNewsletter('next');
-      } else if (event.key === 'ArrowLeft') {
-        event.preventDefault();
-        navigateNewsletter('previous');
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    // Limpa o listener quando o componente desmonta ou a dependência muda
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [selectedNewsletter, navigateNewsletter]);
-
   // Redireciona o usuário para a rota de autenticação do Google no backend
   const handleLogin = () => {
     const idForAuth = userId || crypto.randomUUID(); // Usa o userId existente ou gera um novo
@@ -195,6 +169,25 @@ export default function Home() {
       handleAction('read', newNewsletter);
     }
   }, [selectedNewsletter, getFilteredNewsletters, handleAction]);
+
+  // Efeito para adicionar navegação por setas quando uma newsletter está aberta
+  useEffect(() => {
+    const handleKeyPress = (event: KeyboardEvent) => {
+      if (!selectedNewsletter) return;
+
+      if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        navigateNewsletter('next');
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        navigateNewsletter('previous');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    // Limpa o listener quando o componente desmonta ou a dependência muda
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [selectedNewsletter, navigateNewsletter]);
 
   // Salva a lista de newsletters no localStorage
   const saveToLocalStorage = (newsletters: Newsletter[]) => {
@@ -326,6 +319,13 @@ export default function Home() {
       fetchNewslettersFromGmail();
     }
   }, [fetchNewslettersFromGmail]);
+
+  // Efeito para carregar os dados iniciais assim que o userId estiver disponível
+  useEffect(() => {
+    if (userId) {
+      loadInitialData();
+    }
+  }, [userId, loadInitialData]);
 
   const syncWithGmail = useCallback(async () => {
     try {

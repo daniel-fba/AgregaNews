@@ -4,10 +4,7 @@ const express = require('express');
 const { google } = require('googleapis');
 const cheerio = require('cheerio');
 const cors = require('cors');
-const sqlite3 = require('sqlite3');
-const { open } = require('sqlite');
-const path = require('path');
-
+const { MongoClient } = require('mongodb')
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -38,33 +35,13 @@ function getDatabase() {
 
 async function initializeDatabase() {
     try {
-        // Define o caminho do banco de dados de forma diferente para produção (Vercel usa /tmp) e desenvolvimento
-        const dbPath = process.env.NODE_ENV === 'production'
-            ? '/tmp'
-            : path.join(__dirname, '..', 'database');
-
-        // Em desenvolvimento, cria o diretório do banco de dados se ele não existir
-        if (process.env.NODE_ENV !== 'production') {
-            require('fs').mkdirSync(dbPath, { recursive: true });
+        if (!process.env.MONGODB_URI) {
+            throw new Error('MONGODB_URI não está definido no ambiente.');
         }
-
-        const dbFilename = path.join(dbPath, 'usersTokens.sqlite');
-
-        const db = await open({
-            filename: dbFilename,
-            driver: sqlite3.Database
-        });
-
-        await db.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            userId TEXT PRIMARY KEY,
-            accessToken TEXT,
-            refreshToken TEXT,
-            expiryDate INTEGER
-            );
-            `);
-        console.log('Banco de dados inicializado em:', dbFilename);
-        return db;
+        const client = new MongoClient(process.env.MONGODB_URI);
+        await client.connect();
+        console.log('Conectado ao banco de dados MongoDB');
+        return client.db();
     } catch (error) {
         console.error('Erro ao inicializar o banco de dados:', error);
         throw error;
@@ -84,7 +61,7 @@ const loadUser = async (req, res, next) => {
 
     try {
         const db = await getDatabase();
-        const user = await db.get('SELECT * FROM users WHERE userId = ?', userId);
+        const user = await db.collection('users').findOne({ userId });
 
         if (!user || !user.accessToken) {
             return res.status(401).json({ success: false, error: 'Usuário não autenticado. Por favor, autentique-se.' });
@@ -283,17 +260,19 @@ app.get('/api/oauth2callback', async (req, res) => {
 
         let refreshTokenToSave = tokens.refresh_token;
         if (!refreshTokenToSave) {
-            const existingUser = await db.get('SELECT refreshToken FROM users WHERE userId = ?', userId);
+            const existingUser = await db.collection('users').findOne({ userId: userId });
             refreshTokenToSave = existingUser ? existingUser.refreshToken : null;
         }
 
-        await db.run(
-            `INSERT INTO users (userId, accessToken, refreshToken, expiryDate) VALUES (?, ?, ?, ?)
-             ON CONFLICT(userId) DO UPDATE SET
-                accessToken = excluded.accessToken,
-                refreshToken = excluded.refreshToken,
-                expiryDate = excluded.expiryDate;`,
-            [userId, tokens.access_token, refreshTokenToSave, tokens.expiry_date]
+        await db.collection('users').updateOne(
+            { userId: userId }, {
+            $set: {
+                accessToken: tokens.access_token,
+                refreshToken: refreshTokenToSave,
+                expiryDate: tokens.expiry_date
+            }
+        },
+            { upsert: true }
         );
 
         console.log(`Tokens salvos no banco de dados para o usuário: ${userId}`);
