@@ -7,6 +7,7 @@ import { handleMarkAsRead, handleMarkAsUnread, handleMoveToTrash, handleRestoreF
 import { NewsletterList } from '../components/NewsletterList';
 import { NewsletterViewer } from '../components/NewsletterViewer';
 import { Newsletter } from '../types/newsletter';
+import Link from 'next/link';
 
 export default function Home() {
   const [newsletters, setNewsletters] = useState<Newsletter[]>([]);
@@ -351,14 +352,17 @@ export default function Home() {
   if (!userId) {
     return (
       <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-cinereous text-black">
-        <h1 className="text-4xl font-bold mb-8 text-snow">AgregaNews</h1>
-        <p className="text-lg mb-4 text-snow">Para continuar faça login com sua conta do Google.</p>
+        <h1 className="text-4xl font-bold mb-8 text-snow">Bem-vindo ao AgregaNews</h1>
+        <p className='text-xl mb-8 text-snow'>Organize e leia todas as suas newsletters do Gmail em um só lugar, com uma interface limpa e sem distrações.</p>
         <button
           onClick={handleLogin}
           className="bg-blue-600 hover:bg-blue-700 text-snow text-lg font-bold py-3 px-6 rounded-md transition-colors duration-300 cursor-pointer"
         >
           Entrar com Google
         </button>
+        <footer className="text-sm text-snow">
+          <Link href="/privacy-policy" className="hover:underline ">Política de Privacidade</Link>
+        </footer>
       </main>
     );
   }
@@ -499,6 +503,9 @@ export default function Home() {
           </>
         )}
       </div>
+      <footer className="text-sm text-snow">
+        <Link href="/privacy-policy" className="hover:underline">Política de Privacidade</Link>
+      </footer>
     </main>
   );
 }
